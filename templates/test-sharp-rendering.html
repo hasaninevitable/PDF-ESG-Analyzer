@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sharp PDF Rendering Test</title>
+    <style>
+        body { margin: 20px; background: #f0f0f0; }
+        canvas { 
+            border: 1px solid #ccc; 
+            background: white;
+            /* Critical CSS for sharp rendering */
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+            image-rendering: pixelated;
+            -ms-interpolation-mode: nearest-neighbor;
+        }
+        .info { margin: 10px 0; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h2>Sharp PDF Rendering Test</h2>
+    <div class="info" id="info">Loading...</div>
+    <canvas id="pdf-canvas"></canvas>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 
+            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+        async function renderSharpPDF() {
+            const canvas = document.getElementById('pdf-canvas');
+            const context = canvas.getContext('2d');
+            const info = document.getElementById('info');
+            
+            // Get PDF file from URL parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const pdfFile = urlParams.get('file');
+            
+            if (!pdfFile) {
+                info.textContent = 'No PDF file specified. Add ?file=yourfile.pdf to URL';
+                return;
+            }
+            
+            try {
+                const pdf = await pdfjsLib.getDocument(`/uploads/${pdfFile}`).promise;
+                const page = await pdf.getPage(1);
+                
+                // Ultra-high resolution settings
+                const SCALE_FACTOR = 4.0; // Very high scale
+                const PIXEL_RATIO = Math.max(window.devicePixelRatio, 3);
+                
+                const viewport = page.getViewport({ scale: SCALE_FACTOR });
+                
+                // Set canvas to ultra-high resolution
+                canvas.width = viewport.width * PIXEL_RATIO;
+                canvas.height = viewport.height * PIXEL_RATIO;
+                
+                // Display size (what user sees)
+                canvas.style.width = Math.min(viewport.width, 800) + 'px';
+                canvas.style.height = Math.min(viewport.height, 600) + 'px';
+                
+                // Configure context for maximum sharpness
+                context.imageSmoothingEnabled = false; // Disable smoothing
+                context.webkitImageSmoothingEnabled = false;
+                context.mozImageSmoothingEnabled = false;
+                context.msImageSmoothingEnabled = false;
+                context.oImageSmoothingEnabled = false;
+                
+                // Scale context
+                context.scale(PIXEL_RATIO, PIXEL_RATIO);
+                
+                info.innerHTML = `
+                    PDF: ${pdfFile}<br>
+                    Scale: ${SCALE_FACTOR}x<br>
+                    Pixel Ratio: ${PIXEL_RATIO}x<br>
+                    Canvas: ${canvas.width}×${canvas.height}<br>
+                    Display: ${canvas.style.width}×${canvas.style.height}<br>
+                    Device Pixel Ratio: ${window.devicePixelRatio}
+                `;
+                
+                // Render with ultra-high resolution
+                const renderContext = {
+                    canvasContext: context,
+                    viewport: page.getViewport({ scale: SCALE_FACTOR * PIXEL_RATIO }),
+                    intent: 'display'
+                };
+                
+                await page.render(renderContext).promise;
+                info.innerHTML += '<br><strong>✅ Rendered successfully!</strong>';
+                
+            } catch (error) {
+                info.textContent = `Error: ${error.message}`;
+            }
+        }
+        
+        renderSharpPDF();
+    </script>
+</body>
+</html>

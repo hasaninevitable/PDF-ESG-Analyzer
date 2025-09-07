@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>ESG Semantic Search PDF</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            padding: 20px; 
+            background: #f8f9fa;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        form { 
+            margin-bottom: 30px; 
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #results { 
+            margin-top: 20px; 
+        }
+        .sentence {
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 10px;
+            cursor: default;
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .sentence:hover {
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        }
+        button.highlight-btn {
+            margin-left: 15px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+        button.highlight-btn:hover {
+            background: #0056b3;
+        }
+        .loading {
+            color: #666;
+            font-style: italic;
+            text-align: center;
+            padding: 20px;
+        }
+        .error {
+            color: #dc3545;
+            text-align: center;
+            padding: 20px;
+        }
+        .success {
+            color: #28a745;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        .file-input {
+            margin-bottom: 15px;
+        }
+        .upload-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .upload-btn:hover {
+            background: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Upload PDF for ESG Semantic Search</h1>
+        
+        <form id="upload-form" enctype="multipart/form-data">
+            <div class="file-input">
+                <input type="file" name="pdf_file" accept="application/pdf" required />
+            </div>
+            <button type="submit" class="upload-btn">Upload & Search</button>
+        </form>
+
+        <div id="results">
+            <h2>ESG Sentences Found:</h2>
+            <div id="sentences-list"></div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('upload-form');
+        const sentencesList = document.getElementById('sentences-list');
+        let uploadedFilename = null;
+        let pdfViewerWindow = null;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const fileInput = document.querySelector('input[name="pdf_file"]');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                sentencesList.innerHTML = '<p class="error">Please select a PDF file first.</p>';
+                return;
+            }
+
+            uploadedFilename = fileInput.files[0].name;
+            const formData = new FormData();
+            formData.append('pdf_file', fileInput.files[0]);
+
+            sentencesList.innerHTML = '<p class="loading">Processing PDF and searching for ESG content...</p>';
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    sentencesList.innerHTML = `<p class="error">Error: ${data.error}</p>`;
+                    return;
+                }
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    sentencesList.innerHTML = '<p class="error">No ESG-related sentences found.</p>';
+                    return;
+                }
+
+                sentencesList.innerHTML = `<p class="success">Found ${data.length} ESG-related sentences:</p>`;
+
+                data.forEach((item, index) => {
+                    const div = document.createElement('div');
+                    div.classList.add('sentence');
+                    
+                    const textContent = document.createElement('span');
+                    textContent.innerHTML = `<strong>Page ${item.page}:</strong> ${item.text}`;
+                    if (item.similarity) {
+                        textContent.innerHTML += ` <em>(similarity: ${item.similarity.toFixed(3)})</em>`;
+                    }
+                    div.appendChild(textContent);
+
+                    const btn = document.createElement('button');
+                    btn.textContent = 'Highlight';
+                    btn.classList.add('highlight-btn');
+                    btn.title = `View and highlight this sentence on page ${item.page}`;
+                    
+                    btn.onclick = () => {
+                        openPDFViewerWithHighlight(item);
+                    };
+
+                    div.appendChild(btn);
+                    sentencesList.appendChild(div);
+                });
+
+            } catch (error) {
+                sentencesList.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                console.error('Upload error:', error);
+            }
+        });
+
+        function openPDFViewerWithHighlight(item) {
+            if (!uploadedFilename) {
+                alert('No PDF file available');
+                return;
+            }
+
+            console.log('Opening viewer with highlight data:', item);
+
+            // Prepare highlight data
+            const highlightData = {
+                page: item.page,
+                coords: item.coords
+            };
+
+            // Build URL with both file and highlight parameters
+            const params = new URLSearchParams({
+                file: uploadedFilename,
+                highlight: JSON.stringify(highlightData)
+            });
+
+            const viewerURL = `/pdf_viewer?${params.toString()}`;
+            console.log('Opening viewer URL:', viewerURL);
+
+            // Open viewer in new tab
+            pdfViewerWindow = window.open(viewerURL, '_blank');
+            
+            if (pdfViewerWindow) {
+                pdfViewerWindow.focus();
+                
+                // Send postMessage as backup after viewer loads
+                // This provides redundancy in case URL params fail
+                setTimeout(() => {
+                    if (pdfViewerWindow && !pdfViewerWindow.closed) {
+                        console.log('Sending postMessage backup:', {
+                            page: item.page,
+                            x0: item.coords.x0,
+                            y0: item.coords.y0,
+                            x1: item.coords.x1,
+                            y1: item.coords.y1
+                        });
+                        
+                        pdfViewerWindow.postMessage({
+                            type: 'highlight',
+                            page: item.page,
+                            x0: item.coords.x0,
+                            y0: item.coords.y0,
+                            x1: item.coords.x1,
+                            y1: item.coords.y1
+                        }, "*");
+                    }
+                }, 2000); // Wait for viewer to fully load
+            } else {
+                alert('Please allow pop-ups for this site to view PDF highlights');
+            }
+        }
+    </script>
+</body>
+</html>

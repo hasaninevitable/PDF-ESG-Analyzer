@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ESG PDF Viewer - Semantic Highlights</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #fcfcfc;
+      font-family: Verdana, Geneva, Tahoma, sans-serif;
+      color: #222;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    
+    #page-wrap {
+      max-width: 95vw;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    
+    .page {
+      position: relative;
+      margin: 20px auto;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+      border-radius: 8px;
+      background: white;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    
+    .page.landscape {
+      max-width: 95vw;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    
+    canvas {
+      display: block;
+      border-radius: 8px;
+      max-width: 100%;
+      max-height: 90vh;
+      height: auto;
+      object-fit: contain;
+    }
+    
+    .highlight-box {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(255, 243, 128, 0.6);
+      border: 3px solid #f7df1e;
+      border-radius: 4px;
+      box-shadow: 0 0 20px 5px rgba(255, 223, 30, 0.8);
+      transition: all 0.3s ease;
+      z-index: 10;
+      animation: highlightPulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes highlightPulse {
+      0%, 100% { 
+        background: rgba(255, 243, 128, 0.6);
+        box-shadow: 0 0 20px 5px rgba(255, 223, 30, 0.8);
+      }
+      50% { 
+        background: rgba(255, 243, 128, 0.8);
+        box-shadow: 0 0 30px 8px rgba(255, 223, 30, 1);
+      }
+    }
+    
+    .toolbar {
+      width: 100%;
+      max-width: 95vw;
+      margin: 0 auto 15px auto;
+      background: #323232;
+      color: #f3f3f3;
+      text-align: center;
+      padding: 16px 0;
+      font-weight: 600;
+      font-size: 20px;
+      border-radius: 0 0 14px 14px;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    #loading-box {
+      position: fixed;
+      top: 15px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #ffc107dd;
+      color: #222;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-weight: bold;
+      box-shadow: 0 0 10px rgba(255,193,7,0.7);
+      z-index: 9999;
+      font-family: monospace;
+    }
+    
+    #loading-box.hidden {
+      display: none;
+    }
+    
+    .highlight-info {
+      background: #e7f3ff;
+      padding: 15px;
+      margin: 10px auto;
+      border-radius: 8px;
+      border-left: 4px solid #007bff;
+      max-width: 95vw;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .error-box {
+      background: #ffe6e6;
+      border: 1px solid #ff4444;
+      color: #cc0000;
+      padding: 15px;
+      margin: 20px;
+      border-radius: 8px;
+      font-weight: bold;
+    }
+
+    .debug-info {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 5px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-family: monospace;
+      z-index: 15;
+    }
+
+    .coord-debug {
+      position: absolute;
+      border: 2px dashed red;
+      background: rgba(255,0,0,0.1);
+      z-index: 5;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="loading-box">Loading PDF...</div>
+
+  <div class="toolbar">📄 ESG Semantic PDF Viewer</div>
+
+  <div id="highlight-info" class="highlight-info" style="display: none;">
+    <strong>📍 Ready to highlight sentence on page <span id="target-page"></span></strong>
+  </div>
+
+  <div id="page-wrap"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    // Set PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+    // Get parameters from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const pdfFile = urlParams.get('file');
+    const highlightParam = urlParams.get('highlight');
+    
+    console.log('PDF file:', pdfFile);
+    console.log('Highlight param:', highlightParam);
+    
+    const pageWrap = document.getElementById('page-wrap');
+    const loadingBox = document.getElementById('loading-box');
+    const highlightInfo = document.getElementById('highlight-info');
+    
+    let pdfDoc = null;
+    let pageViews = {};
+    let currentHighlightBox = null;
+    let pendingHighlight = null;
+    
+    const BASE_SCALE = 1.2;
+
+    // Parse highlight data
+    if (highlightParam) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(highlightParam));
+        console.log('Parsed highlight:', parsed);
+        
+        if (parsed.page && parsed.coords) {
+          pendingHighlight = {
+            page: parsed.page,
+            x0: parsed.coords.x0,
+            y0: parsed.coords.y0,
+            x1: parsed.coords.x1,
+            y1: parsed.coords.y1,
+            page_dimensions: parsed.page_dimensions
+          };
+          
+          highlightInfo.style.display = 'block';
+          document.getElementById('target-page').textContent = parsed.page;
+          console.log('Pending highlight set for page', parsed.page, pendingHighlight);
+        }
+      } catch (e) {
+        console.error('Failed to parse highlight data:', e);
+      }
+    }
+
+    async function renderAllPages() {
+      if (!pdfFile) {
+        loadingBox.innerHTML = '<div class="error-box">No PDF file specified</div>';
+        return;
+      }
+      
+      try {
+        const pdfUrl = `/uploads/${pdfFile}`;
+        console.log('Loading PDF from:', pdfUrl);
+        
+        pdfDoc = await pdfjsLib.getDocument(pdfUrl).promise;
+        loadingBox.classList.add('hidden');
+        console.log('PDF loaded:', pdfDoc.numPages, 'pages');
+        
+        // Render all pages
+        for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+          const page = await pdfDoc.getPage(pageNum);
+          
+          // Get base viewport to determine orientation
+          const baseViewport = page.getViewport({ scale: 1.0 });
+          const pageAspectRatio = baseViewport.width / baseViewport.height;
+          const isLandscape = pageAspectRatio > 1.2;
+          
+          // Calculate appropriate scale
+          const maxViewportWidth = window.innerWidth * 0.95;
+          const maxViewportHeight = window.innerHeight * 0.85;
+          
+          let scale;
+          if (isLandscape) {
+            const scaleByWidth = maxViewportWidth / baseViewport.width;
+            const scaleByHeight = maxViewportHeight / baseViewport.height;
+            scale = Math.min(scaleByWidth, scaleByHeight, BASE_SCALE);
+          } else {
+            scale = Math.min(BASE_SCALE, maxViewportWidth / baseViewport.width);
+          }
+          
+          const viewport = page.getViewport({ scale: scale });
+          console.log(`Page ${pageNum}: ${baseViewport.width}x${baseViewport.height} (${isLandscape ? 'landscape' : 'portrait'}) -> scale: ${scale.toFixed(2)}`);
+          
+          // Create page container
+          const pageDiv = document.createElement('div');
+          pageDiv.classList.add('page');
+          if (isLandscape) {
+            pageDiv.classList.add('landscape');
+          }
+          pageDiv.style.width = viewport.width + 'px';
+          pageDiv.style.height = viewport.height + 'px';
+          pageDiv.setAttribute('data-page', pageNum);
+          pageWrap.appendChild(pageDiv);
+
+          // Add debug info
+          const debugInfo = document.createElement('div');
+          debugInfo.className = 'debug-info';
+          debugInfo.textContent = `Page ${pageNum} | ${viewport.width.toFixed(0)}×${viewport.height.toFixed(0)} | Scale: ${scale.toFixed(2)}`;
+          pageDiv.appendChild(debugInfo);
+
+          // Create canvas
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          canvas.style.width = viewport.width + 'px';
+          canvas.style.height = viewport.height + 'px';
+          pageDiv.appendChild(canvas);
+
+          // Render page
+          await page.render({
+            canvasContext: context,
+            viewport: viewport
+          }).promise;
+
+          // Store page info with transformation matrix
+          pageViews[pageNum] = { 
+            pageDiv, 
+            viewport, 
+            isLandscape,
+            scale,
+            transform: viewport.transform
+          };
+          
+          console.log('Rendered page', pageNum, 'Transform matrix:', viewport.transform);
+          
+          // Apply highlight if this is the target page
+          if (pendingHighlight && pendingHighlight.page === pageNum) {
+            console.log('Applying highlight to page', pageNum);
+            setTimeout(() => applyHighlight(pendingHighlight), 500);
+          }
+        }
+        
+        console.log('All pages rendered successfully');
+        
+      } catch (e) {
+        const error = `Failed to load PDF: ${e.message}`;
+        loadingBox.innerHTML = `<div class="error-box">${error}</div>`;
+        console.error('PDF loading error:', e);
+      }
+    }
+
+    function applyHighlight(highlightData) {
+      const { page, x0, y0, x1, y1 } = highlightData;
+      console.log(`🎯 Applying highlight to page ${page}:`);
+      console.log('   Raw PyMuPDF coords:', { x0, y0, x1, y1 });
+      
+      if (!pageViews[page]) {
+        console.error(`Page ${page} not found`);
+        return;
+      }
+      
+      const { pageDiv, viewport, isLandscape, scale } = pageViews[page];
+
+      // Clear previous highlights
+      if (currentHighlightBox) {
+        currentHighlightBox.remove();
+        currentHighlightBox = null;
+      }
+      
+      // Remove debug overlays
+      const existingDebug = pageDiv.querySelectorAll('.coord-debug');
+      existingDebug.forEach(el => el.remove());
+
+      try {
+        // Use the same approach as your friend's code
+        const pageHeightPts = viewport.height / viewport.scale;
+        const T = viewport.transform;
+        
+        console.log('   Page height (pts):', pageHeightPts);
+        console.log('   Transform matrix:', T);
+
+        // Convert PyMuPDF coordinates to PDF.js viewport coordinates
+        // PyMuPDF: bottom-left origin -> PDF.js: top-left origin
+        const A_pdf = [x0, pageHeightPts - y0];  // Top-left corner
+        const B_pdf = [x1, pageHeightPts - y1];  // Bottom-right corner
+        
+        console.log('   Converted PDF coords:', { A_pdf, B_pdf });
+        
+        // Apply PDF.js transformation matrix
+        const A_vp = pdfjsLib.Util.applyTransform(A_pdf, T);
+        const B_vp = pdfjsLib.Util.applyTransform(B_pdf, T);
+        
+        console.log('   Viewport coords:', { A_vp, B_vp });
+
+        // Calculate final highlight dimensions
+        const left = Math.min(A_vp[0], B_vp[0]);
+        const top = Math.min(A_vp[1], B_vp[1]);
+        const width = Math.abs(B_vp[0] - A_vp[0]);
+        const height = Math.abs(B_vp[1] - A_vp[1]);
+
+        console.log('   Final dimensions:', { left, top, width, height });
+
+        // Create highlight overlay
+        const highlightBox = document.createElement('div');
+        highlightBox.className = 'highlight-box';
+        highlightBox.style.left = left + 'px';
+        highlightBox.style.top = top + 'px';
+        highlightBox.style.width = width + 'px';
+        highlightBox.style.height = height + 'px';
+        
+        pageDiv.appendChild(highlightBox);
+        currentHighlightBox = highlightBox;
+
+        // Add debug overlay
+        const debugOverlay = document.createElement('div');
+        debugOverlay.className = 'coord-debug';
+        debugOverlay.style.left = left + 'px';
+        debugOverlay.style.top = top + 'px';
+        debugOverlay.style.width = width + 'px';
+        debugOverlay.style.height = height + 'px';
+        debugOverlay.title = `Final: (${left.toFixed(1)}, ${top.toFixed(1)}, ${width.toFixed(1)}, ${height.toFixed(1)})`;
+        pageDiv.appendChild(debugOverlay);
+
+        // Scroll into view
+        setTimeout(() => {
+          highlightBox.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center',
+            inline: 'center'
+          });
+          console.log('✅ Highlight applied and scrolled into view');
+        }, 1000);
+        
+      } catch (error) {
+        console.error('❌ Error applying highlight:', error);
+      }
+    }
+
+    // Listen for postMessage
+    window.addEventListener('message', event => {
+      console.log('Received postMessage:', event.data);
+      const data = event.data;
+      if (data && data.page && (data.x0 !== undefined)) {
+        console.log('Applying postMessage highlight');
+        applyHighlight(data);
+      }
+    });
+
+    // Handle window resize
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        console.log('Window resized, adjusting layout...');
+        const landscapePages = document.querySelectorAll('.page.landscape');
+        landscapePages.forEach(page => {
+          const rect = page.getBoundingClientRect();
+          if (rect.width < window.innerWidth * 0.95) {
+            page.style.marginLeft = 'auto';
+            page.style.marginRight = 'auto';
+          }
+        });
+      }, 250);
+    });
+
+    console.log('Initializing PDF viewer...');
+    renderAllPages();
+  </script>
+</body>
+</html>

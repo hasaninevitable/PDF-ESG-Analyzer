@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Debug Test - PDF Viewer</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .debug { background: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        .info { background: #e3f2fd; color: #1565c0; }
+        canvas { border: 1px solid #ccc; margin: 10px 0; }
+        .highlight { 
+            position: absolute; 
+            background: rgba(255, 255, 0, 0.5); 
+            border: 2px solid red; 
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF Debug Test</h1>
+    <div id="status"></div>
+    <div id="pdf-container" style="position: relative;"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+        function log(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            const div = document.createElement('div');
+            div.className = `debug ${type}`;
+            div.innerHTML = `${new Date().toLocaleTimeString()}: ${message}`;
+            statusDiv.appendChild(div);
+            console.log(`[${type.toUpperCase()}]`, message);
+        }
+
+        // Get URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const pdfFile = urlParams.get('file');
+        const highlightParam = urlParams.get('highlight');
+
+        log(`URL Parameters - file: "${pdfFile}", highlight: "${highlightParam}"`);
+
+        if (!pdfFile) {
+            log("ERROR: No PDF file specified in URL", 'error');
+        } else {
+            testPDFLoad();
+        }
+
+        async function testPDFLoad() {
+            try {
+                const pdfUrl = `/uploads/${pdfFile}`;
+                log(`Testing PDF URL: ${pdfUrl}`);
+
+                // Test if file exists
+                const response = await fetch(pdfUrl, { method: 'HEAD' });
+                if (!response.ok) {
+                    throw new Error(`PDF not found: ${response.status} ${response.statusText}`);
+                }
+                log("✅ PDF file exists", 'success');
+
+                // Load PDF
+                const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
+                log(`✅ PDF loaded successfully: ${pdf.numPages} pages`, 'success');
+
+                // Render first page only for testing
+                const page = await pdf.getPage(1);
+                const viewport = page.getViewport({ scale: 1.2 });
+                
+                log(`Page 1 dimensions: ${viewport.width} x ${viewport.height}`);
+
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+
+                const container = document.getElementById('pdf-container');
+                container.appendChild(canvas);
+
+                await page.render({
+                    canvasContext: context,
+                    viewport: viewport
+                }).promise;
+
+                log("✅ Page 1 rendered successfully", 'success');
+
+                // Test highlight if provided
+                if (highlightParam) {
+                    testHighlight(highlightParam, viewport);
+                }
+
+            } catch (error) {
+                log(`ERROR: ${error.message}`, 'error');
+            }
+        }
+
+        function testHighlight(highlightParam, viewport) {
+            try {
+                log(`Testing highlight parsing...`);
+                const highlightData = JSON.parse(decodeURIComponent(highlightParam));
+                log(`Highlight data: ${JSON.stringify(highlightData)}`);
+
+                if (highlightData.page === 1 && highlightData.coords) {
+                    const coords = highlightData.coords;
+                    log(`Creating highlight box for coords: (${coords.x0}, ${coords.y0}) to (${coords.x1}, ${coords.y1})`);
+
+                    // Simple coordinate transformation
+                    const pdfHeight = viewport.height / viewport.scale;
+                    const left = coords.x0 * viewport.scale;
+                    const top = (pdfHeight - coords.y1) * viewport.scale;
+                    const width = (coords.x1 - coords.x0) * viewport.scale;
+                    const height = (coords.y1 - coords.y0) * viewport.scale;
+
+                    log(`Calculated highlight position: left=${left.toFixed(1)}, top=${top.toFixed(1)}, width=${width.toFixed(1)}, height=${height.toFixed(1)}`);
+
+                    const highlight = document.createElement('div');
+                    highlight.className = 'highlight';
+                    highlight.style.left = left + 'px';
+                    highlight.style.top = top + 'px';
+                    highlight.style.width = width + 'px';
+                    highlight.style.height = height + 'px';
+
+                    document.getElementById('pdf-container').appendChild(highlight);
+                    log("✅ Highlight box created", 'success');
+                } else {
+                    log(`Highlight not for page 1 (page ${highlightData.page}) - skipping`);
+                }
+
+            } catch (error) {
+                log(`ERROR parsing highlight: ${error.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html><head><title>Sharp Test</title></head><body>
+<canvas id="c" style="border:1px solid red; image-rendering: pixelated;"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+const SCALE = 5; // Very high scale
+pdfjsLib.getDocument('/uploads/report.pdf').promise.then(pdf => pdf.getPage(1)).then(page => {
+    const viewport = page.getViewport({scale: SCALE});
+    canvas.width = viewport.width; canvas.height = viewport.height;
+    canvas.style.width = (viewport.width/2) + 'px'; canvas.style.height = (viewport.height/2) + 'px';
+    ctx.imageSmoothingEnabled = false;
+    return page.render({canvasContext: ctx, viewport: viewport}).promise;
+});
+</script></body></html>
