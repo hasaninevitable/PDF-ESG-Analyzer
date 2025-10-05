@@ -1,7 +1,7 @@
 """
-ESG PDF Extraction Utility - Fixed Version
+ESG PDF Extraction Utility - Fixed with Spatial Filtering
 Extracts sentences and headings with RAW PyMuPDF bounding boxes.
-Let the frontend handle coordinate transformation.
+Includes spatial proximity filtering to prevent coordinate mismatches.
 """
 
 import fitz  # PyMuPDF
@@ -16,6 +16,40 @@ nltk.download("punkt", quiet=True)
 def is_heading(text, size):
     """Detect headings by format."""
     return text.isupper() and size > 16
+
+def calculate_vertical_distance(bbox1, bbox2):
+    """Calculate vertical distance between two bboxes"""
+    center_y1 = (bbox1[1] + bbox1[3]) / 2
+    center_y2 = (bbox2[1] + bbox2[3]) / 2
+    return abs(center_y1 - center_y2)
+
+def filter_spatially_close_bboxes(bboxes, max_vertical_distance=50):
+    """
+    Filter bboxes to keep only those that are spatially close to each other.
+    This prevents matching text from different parts of the page.
+    
+    Args:
+        bboxes: List of bounding boxes
+        max_vertical_distance: Maximum vertical distance in points (default: 50)
+    
+    Returns:
+        List of filtered bboxes
+    """
+    if not bboxes:
+        return []
+    
+    if len(bboxes) == 1:
+        return bboxes
+    
+    # Calculate median Y position
+    y_positions = [(bbox[1] + bbox[3]) / 2 for bbox in bboxes]
+    median_y = sorted(y_positions)[len(y_positions) // 2]
+    
+    # Keep only bboxes close to the median
+    filtered = [bbox for bbox in bboxes 
+                if abs((bbox[1] + bbox[3]) / 2 - median_y) < max_vertical_distance]
+    
+    return filtered if filtered else bboxes
 
 def extract_pdf_regions(pdf_path):
     """Extract all headings and sentences with RAW PyMuPDF bounding boxes."""
@@ -35,6 +69,10 @@ def extract_pdf_regions(pdf_path):
         for block in blocks:
             if "lines" not in block:
                 continue
+            
+            # Get block bbox for additional filtering
+            block_bbox = block.get("bbox", None)
+            
             for line in block["lines"]:
                 sizes = [span["size"] for span in line["spans"] if span["text"].strip()]
                 if not sizes:
@@ -53,7 +91,7 @@ def extract_pdf_regions(pdf_path):
                         "text": line_txt.strip(),
                         "coords": {
                             "x0": bbox[0],
-                            "y0": bbox[1],  # Keep RAW PyMuPDF coordinates
+                            "y0": bbox[1],
                             "x1": bbox[2],
                             "y1": bbox[3]
                         },
@@ -64,7 +102,8 @@ def extract_pdf_regions(pdf_path):
                     start_pos = len(bulk)
                     bulk += line_txt + " "
                     end_pos = len(bulk)
-                    indices.append((start_pos, end_pos, line["bbox"]))
+                    # Store bbox with block context
+                    indices.append((start_pos, end_pos, line["bbox"], block_bbox))
 
         print(f"  Assembled {len(indices)} spans on page {page_idx+1}.")
 
@@ -74,18 +113,29 @@ def extract_pdf_regions(pdf_path):
             if sent_start == -1: 
                 continue
             sent_end = sent_start + len(sent)
-            overlap_bboxes = [b for s, e, b in indices if not (e < sent_start or s > sent_end)]
+            
+            # Get overlapping bboxes
+            overlap_bboxes = [b for s, e, b, block_b in indices 
+                            if not (e < sent_start or s > sent_end)]
+            
             if not overlap_bboxes:
                 print(f"    Skipped sentence (no bbox): '{sent[:32]}' ...")
                 continue
-                
+            
+            # CRITICAL FIX: Filter bboxes to only those spatially close to each other
+            if len(overlap_bboxes) > 1:
+                original_count = len(overlap_bboxes)
+                overlap_bboxes = filter_spatially_close_bboxes(overlap_bboxes)
+                if len(overlap_bboxes) < original_count:
+                    print(f"    Filtered {original_count - len(overlap_bboxes)} distant bboxes")
+            
             # Calculate combined bounding box
             x0 = min(b[0] for b in overlap_bboxes)
             y0 = min(b[1] for b in overlap_bboxes)
             x1 = max(b[2] for b in overlap_bboxes)
             y1 = max(b[3] for b in overlap_bboxes)
             
-            print(f"    Sentence: '{sent[:32]}' at RAW ({x0:.1f}, {y0:.1f}, {x1:.1f}, {y1:.1f})")
+            print(f"    Sentence: '{sent[:32]}' at RAW ({x0:.1f}, {y0:.1f}, {x1:.1f}, {y1:.1f}) [{len(overlap_bboxes)} bboxes]")
             
             results.append({
                 "page": page_idx + 1,
@@ -93,7 +143,7 @@ def extract_pdf_regions(pdf_path):
                 "text": sent.strip(),
                 "coords": {
                     "x0": x0,
-                    "y0": y0,  # Keep RAW coordinates - no transformation
+                    "y0": y0,
                     "x1": x1,
                     "y1": y1
                 },
@@ -152,7 +202,7 @@ def ocr_fallback_regions(pdf_path):
                 "text": txt,
                 "coords": {
                     "x0": pdf_x0,
-                    "y0": pdf_y0,  # RAW PyMuPDF coordinates
+                    "y0": pdf_y0,
                     "x1": pdf_x1,
                     "y1": pdf_y1
                 },
