@@ -232,9 +232,18 @@ if __name__ == "__main__":
     print(f"📁 Upload folder: {UPLOAD_FOLDER}")
     print(f"📊 Max file size: {MAX_CONTENT_LENGTH / (1024*1024):.0f}MB")
     
+    # Get port from environment variable (Render sets this)
+    port = int(os.environ.get("PORT", 5000))
+    
+    # Determine if we're in production or development
+    is_production = os.environ.get("RENDER") is not None
+    
+    print(f"🌍 Running on port: {port}")
+    print(f"🔧 Environment: {'Production (Render)' if is_production else 'Development'}")
+    
     app.run(
-        debug=True, 
+        debug=not is_production,  # Disable debug in production
         host="0.0.0.0", 
-        port=8080,
+        port=port,
         threaded=True
     )
