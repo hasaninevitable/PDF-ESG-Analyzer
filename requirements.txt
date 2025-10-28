@@ -1,6 +1,6 @@
 flask==2.3.3
 werkzeug==2.3.7
-pymupdf==1.23.5
+pymupdf==1.22.5
 pytesseract==0.3.10
 pillow==10.0.1
 nltk==3.8.1
